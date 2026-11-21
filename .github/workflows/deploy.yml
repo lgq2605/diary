@@ -1,0 +1,42 @@
+# Publishes the site to GitHub Pages every time you push to main.
+# One-time setup: repository Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]          # change to master if that is your default branch
+  workflow_dispatch:          # also lets you press "Run workflow" by hand
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  check:                      # a broken publish must never replace a working site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node .github/scripts/check-pwa.js .
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: .             # the folder that holds index.html (use ./diary-pwa if you keep it in a sub-folder)
+      - id: deployment
+        uses: actions/deploy-pages@v4

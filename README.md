@@ -5,12 +5,17 @@ so after the first visit it also opens offline.
 
 ## Put it online (HTTPS is required for installing)
 
-**GitHub Pages (free, HTTPS automatic)**
-1. Create a repository and upload *all* files and folders from this folder (keep `icons/` and `fonts/`; keep the hidden `.nojekyll` file).
-2. Repository → Settings → Pages → "Deploy from a branch" → `main` / `(root)` → Save.
-3. Open `https://YOUR-NAME.github.io/YOUR-REPO/` — the Install App button appears there.
+**GitHub Pages with GitHub Actions (recommended — publish by pushing)**
+1. Create a repository and upload *all* files and folders from this folder to the `main` branch, including the hidden
+   `.github` folder (it holds the deploy workflow). Keep `icons/` and `fonts/`.
+2. Repository → **Settings → Pages → Build and deployment → Source: "GitHub Actions"** (one time).
+3. Push. The **Actions** tab runs "Deploy to GitHub Pages": it first checks that the service worker, manifest, icons and every
+   file the app needs are present (a broken publish never replaces your working site), then deploys.
+4. Your site is at `https://YOUR-NAME.github.io/YOUR-REPO/`. Every later `git push` updates it, and installed apps update by themselves.
+If your default branch is `master`, change `branches: [main]` in `.github/workflows/deploy.yml`.
+If you keep these files inside a sub-folder of a bigger repo, change `path: .` to that folder (and the check path above it).
 
-**Netlify / Cloudflare Pages / Vercel**: drag this folder into the dashboard (or connect the repo). No build step.
+**Other hosts:** Netlify / Cloudflare Pages / Vercel — drag this folder in (or connect the repo). No build step.
 
 **Test on your computer first**
 ```
@@ -22,11 +27,13 @@ then open http://localhost:8080 in Chrome or Edge (localhost counts as secure).
 Chrome/Edge → F12 → **Application** tab → *Manifest* (name, icons, "Installable") and *Service workers* (activated).
 Lighthouse → *Progressive Web App* should pass.
 
-## How people install it
-- **Chrome / Edge (desktop and Android):** click **Install App** (top-right) → the browser's own install dialog.
-- **iPhone / iPad (Safari):** Share → *Add to Home Screen*. **Safari on Mac:** File → *Add to Dock*.
-- **Firefox desktop** cannot install web apps; the button explains this.
-After installing, the app has its own icon (desktop, Start menu, taskbar, home screen) and opens in its own window.
+## First visit and installing
+On a visitor's first visit a small welcome letter appears ("Welcome to Diary of"). **Explore Diary** closes it; clicking the
+dimmed background does nothing, so the scene never starts by accident. It is remembered in `localStorage`, so it never
+returns — not after a refresh, not after it was dismissed. **Install as an App** appears under it only when the browser
+really supports installing (Chrome, Edge, Android Chrome); it opens the browser's own install dialog, and if the visitor
+declines it is never offered again. There is no install button anywhere else on the page. Safari and Firefox can still
+install from their own menus (iPhone: Share → Add to Home Screen; Safari on Mac: File → Add to Dock).
 
 ## Updates are automatic
 Just publish your changed files — there is no version number to bump and nothing to rebuild.
@@ -48,5 +55,5 @@ reopen the app — a new `diary-of-…` cache appears, then replaces the old one
 
 ## Files
 `index.html` the site · `manifest.webmanifest` app name, icons, colours, standalone mode · `sw.js` offline cache + automatic updates ·
-`pwa.js` install button and service-worker registration · `icons/` 192/512 (+ maskable), Apple and favicon icons ·
+`pwa.js` welcome letter, native install, service worker and updates · `.github/` Pages deploy workflow + safety check · `icons/` 192/512 (+ maskable), Apple and favicon icons ·
 `_headers` optional (Netlify/Cloudflare) · `three.min.js`, `fonts/` bundled libraries

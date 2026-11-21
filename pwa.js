@@ -1,128 +1,76 @@
-/* PWA support for "Diary of": service worker + a real "Install App" button.
-   Uses the browser's native install prompt (beforeinstallprompt) where it exists and shows
-   clear manual steps where it does not (Safari, Firefox, ...). Independent of the 3D scene code. */
+/* PWA support for "Diary of": a first-visit welcome letter (with an optional native "Install as an App" action),
+   a service worker and automatic updates. Independent of the 3D scene code. */
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const btn = $('install-btn'), label = btn && btn.querySelector('span'), panel = $('install-panel'),
-        body = $('ip-body'), title = $('ip-title'), toast = $('install-toast'), closeBtn = $('ip-close');
-  if (!btn || !panel) return;
+  const PWA = window.PWA = window.PWA || {};
+  PWA.config = Object.assign({ welcomeDelayMs: 900, awayReloadMs: 60000, checkEveryMs: 30 * 60 * 1000, minGapMs: 10 * 60 * 1000 }, PWA.config);
+  PWA.reload = PWA.reload || (() => location.reload());
+  PWA.welcomeOpen = false;
 
-  const ua = navigator.userAgent;
-  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const isAndroid = /Android/i.test(ua);
-  const isFirefox = /Firefox|FxiOS/i.test(ua);
-  const isEdge = /Edg(e|A|iOS)?\//.test(ua);
-  const isChromium = /Chrome|CriOS|Chromium/i.test(ua) && !isEdge && !/OPR\//.test(ua);
-  const isSafari = /Safari/i.test(ua) && !/Chrome|CriOS|Chromium|FxiOS|Edg|OPR\//i.test(ua);
-  const isMac = /Macintosh/.test(ua) && !isIOS;
-  const KEY = 'diary-of-installed';
-
+  /* ---------- first-visit welcome letter ---------- */
+  const root = $('welcome'), explore = $('w-explore'), inst = $('w-install'), appEl = $('app');
+  const KEY = 'diary-of-welcomed', DECLINED = 'diary-of-install-declined', INSTALLED = 'diary-of-installed';
+  const mem = {};                                           // last resort if the browser blocks storage
+  const get = k => { try { return localStorage.getItem(k); } catch (e) { return mem[k] || null; } };
+  const set = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { mem[k] = v; } };
   const isStandalone = () =>
     ['standalone', 'window-controls-overlay', 'minimal-ui'].some(m => matchMedia('(display-mode: ' + m + ')').matches) ||
     navigator.standalone === true;
 
-  let deferred = null;     // the browser's install prompt, once it offers one
-  let installed = false;   // true after the app was installed (this session or earlier)
-  let lastFocus = null;
+  let deferred = null;                                      // the browser's own install prompt, once it offers one
+  let installed = get(INSTALLED) === '1', busy = false;
+  const canInstall = () => !!deferred && !installed && !busy && get(DECLINED) !== '1' && !isStandalone();
+  const renderInstall = () => { if (inst) inst.hidden = !canInstall(); };   // shown only where installing really works
 
-  /* ---------- button state ---------- */
-  function render() {
-    if (isStandalone()) { btn.hidden = true; return; }       // already running as the installed app
-    btn.hidden = false;
-    btn.disabled = false;
-    btn.dataset.state = installed ? 'installed' : deferred ? 'ready' : 'manual';
-    label.textContent = installed ? 'App Installed' : 'Install App';
-    btn.setAttribute('aria-label', installed ? 'Diary of is installed. Show how to open it' : 'Install Diary of as an app');
+  function open() {
+    if (!root || PWA.welcomeOpen) return;
+    PWA.welcomeOpen = true; set(KEY, '1');                  // remembered right away: a refresh never shows it again
+    renderInstall();
+    root.setAttribute('aria-hidden', 'false'); root.classList.add('on');
+    setTimeout(() => { if (PWA.welcomeOpen) explore.focus({ preventScroll: true }); }, 350);
+  }
+  function close() {
+    if (!root || !PWA.welcomeOpen) return;
+    PWA.welcomeOpen = false;
+    root.classList.remove('on'); root.setAttribute('aria-hidden', 'true');
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    if (appEl) { appEl.style.pointerEvents = 'none'; setTimeout(() => { appEl.style.pointerEvents = ''; }, 450); }   // no stray click can start the scene
   }
 
-  function say(text) {
-    toast.textContent = text; toast.classList.add('on');
-    clearTimeout(say.t); say.t = setTimeout(() => toast.classList.remove('on'), 4200);
-  }
-
-  /* ---------- manual instructions ---------- */
-  function steps() {
-    if (installed) {
-      return ['Diary of is installed on this device.',
-        ['Open it from your <b>desktop</b>, <b>Start menu / Launchpad</b>, or <b>home screen</b> — it opens in its own window without the browser bar.',
-         'In Chrome or Edge you can also use the <b>Open in app</b> icon at the right end of the address bar.']];
-    }
-    if (!isSecureContext) {
-      return ['This page is not served over HTTPS.',
-        ['Installing needs a secure address. Open the hosted <b>https://</b> version of the site (or <b>http://localhost</b> while testing), then try again.']];
-    }
-    if (isIOS) {
-      return ['Add Diary of to your Home Screen.',
-        ['Tap the <b>Share</b> button' + (isSafari ? '' : ' (if you do not see it, open this page in <b>Safari</b> first)') + '.',
-         'Scroll down and choose <b>Add to Home Screen</b>, then tap <b>Add</b>.',
-         'Open the new <b>Diary</b> icon — it launches full screen like an app.']];
-    }
-    if (isMac && isSafari) {
-      return ['Add Diary of to your Dock.',
-        ['In the menu bar choose <b>File → Add to Dock…</b> (Safari 17 or newer).', 'Click <b>Add</b>. Open it any time from the Dock or Launchpad.']];
-    }
-    if (isFirefox) {
-      return isAndroid
-        ? ['Install from Firefox for Android.', ['Open the <b>⋮ menu</b>.', 'Tap <b>Install</b> (or <b>Add to Home screen</b>).']]
-        : ['Firefox on desktop cannot install web apps.', ['Open this page in <b>Google Chrome</b> or <b>Microsoft Edge</b>, then click <b>Install App</b> again.']];
-    }
-    if (isEdge) {
-      return ['Install from Microsoft Edge.',
-        ['Click the <b>Install</b> icon at the right end of the address bar, or open <b>⋯ → Apps → Install this site as an app</b>.', 'Confirm with <b>Install</b>. You can pin it to the taskbar and Start menu.']];
-    }
-    if (isChromium) {
-      return isAndroid
-        ? ['Install from Chrome on Android.', ['Open the <b>⋮ menu</b>.', 'Tap <b>Install app</b> (or <b>Add to Home screen</b>).']]
-        : ['Install from Google Chrome.',
-           ['Click the <b>Install</b> icon at the right end of the address bar, or open <b>⋮ → Cast, save and share → Install page as app…</b>.',
-            'Confirm with <b>Install</b>. The app appears on your desktop / Start menu and opens in its own window.',
-            'No install icon? Reload the page once, or check whether it is already installed.']];
-    }
-    return ['Install this page as an app.', ['Look for <b>Install</b> or <b>Add to Home Screen</b> in your browser’s menu. Chrome and Edge give the most complete app experience.']];
-  }
-  function openPanel() {
-    const [head, list] = steps();
-    title.textContent = installed ? 'Diary of is installed' : 'Install Diary of';
-    body.innerHTML = '<p>' + head + '</p><ol>' + list.map(s => '<li>' + s + '</li>').join('') + '</ol>';
-    lastFocus = document.activeElement; panel.hidden = false; closeBtn.focus();
-  }
-  function closePanel() { panel.hidden = true; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
-
-  /* ---------- events ---------- */
-  btn.addEventListener('click', async e => {
-    e.stopPropagation();
-    if (installed) return openPanel();
-    if (deferred) {                                          // the real browser install dialog
-      const prompt = deferred; deferred = null; render();
+  if (root) {
+    explore.addEventListener('click', e => { e.stopPropagation(); close(); });
+    root.addEventListener('click', e => { e.stopPropagation(); });                     // the dimmed background does nothing
+    addEventListener('keydown', e => {
+      if (!PWA.welcomeOpen) return;
+      if (e.key === 'Escape') return close();
+      if (e.key === 'Tab') {                                // keep keyboard focus inside the letter
+        const f = [explore, inst].filter(b => b && !b.hidden), i = f.indexOf(document.activeElement);
+        e.preventDefault(); f[(i + (e.shiftKey ? -1 : 1) + f.length) % f.length].focus();
+      }
+    });
+    inst.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!canInstall()) return;
+      const prompt = deferred; deferred = null; busy = true; renderInstall();
       try {
-        await prompt.prompt();
+        await prompt.prompt();                              // the real browser install dialog
         const choice = await prompt.userChoice;
-        if (choice && choice.outcome === 'accepted') say('Installing Diary of…');
-        else say('You can install it any time from this button.');
-      } catch (err) { openPanel(); }
-      return;
+        if (choice && choice.outcome === 'accepted') { installed = true; set(INSTALLED, '1'); busy = false; renderInstall(); close(); }
+        else { set(DECLINED, '1'); busy = false; renderInstall(); }                    // declined once: never ask again
+      } catch (err) { busy = false; renderInstall(); }
+    });
+    if (get(KEY) !== '1') {
+      const go = () => setTimeout(open, PWA.config.welcomeDelayMs);
+      document.readyState === 'complete' ? go() : addEventListener('load', go, { once: true });
     }
-    openPanel();
-  });
-  closeBtn.addEventListener('click', e => { e.stopPropagation(); closePanel(); });
-  panel.addEventListener('click', e => { if (e.target === panel) closePanel(); });
-  addEventListener('keydown', e => { if (e.key === 'Escape' && !panel.hidden) closePanel(); });
-
-  addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; render(); });
-  addEventListener('appinstalled', () => {
-    deferred = null; installed = true;
-    try { localStorage.setItem(KEY, '1'); } catch (e) {}
-    render(); say('Diary of is installed. Open it from your apps.');
-  });
-  try { matchMedia('(display-mode: standalone)').addEventListener('change', render); } catch (e) {}
-
-  /* remember an earlier install, and ask the browser where it can */
-  try { if (localStorage.getItem(KEY) === '1') installed = true; } catch (e) {}
-  if (navigator.getInstalledRelatedApps) {
-    navigator.getInstalledRelatedApps().then(apps => { if (apps && apps.length) { installed = true; render(); } }).catch(() => {});
   }
-  render();
+
+  addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; renderInstall(); });
+  addEventListener('appinstalled', () => { deferred = null; installed = true; set(INSTALLED, '1'); renderInstall(); close(); });
+  if (navigator.getInstalledRelatedApps) {
+    navigator.getInstalledRelatedApps().then(a => { if (a && a.length) { installed = true; renderInstall(); } }).catch(() => {});
+  }
 
   /* ---------- service worker + automatic updates (needs HTTPS or localhost) ----------
      The worker downloads new versions in the background and stages them completely. This page decides WHEN to
@@ -133,10 +81,6 @@
      Hooks for the app:  window.pwaIsIdle()  (true on the start screen)
                          window.pwaUnsaved() (return true while the user has unsaved work -> update waits)
                          window.PWA.reload   (override to customise how the page reloads)                      */
-  const PWA = window.PWA = window.PWA || {};
-  PWA.config = Object.assign({ awayReloadMs: 60000, checkEveryMs: 30 * 60 * 1000, minGapMs: 10 * 60 * 1000 }, PWA.config);
-  PWA.reload = PWA.reload || (() => location.reload());
-
   const canWorker = 'serviceWorker' in navigator &&
     (location.protocol === 'https:' || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname));
   if (!canWorker) return;
